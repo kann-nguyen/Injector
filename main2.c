@@ -143,8 +143,11 @@ int main() {
     }
     printf("Image Base: %p\n", imageBase);
     IMAGE_NT_HEADERS ntHeaderData;
+    BYTE *imageData;
 
     HANDLE hProcess = OpenProcess(PROCESS_VM_READ, FALSE, processID);
+
+    //Read ntHeaderData and imageData
     if (hProcess != NULL) {
         IMAGE_DOS_HEADER dosHeader;
         SIZE_T bytesRead;
@@ -157,6 +160,23 @@ int main() {
                 if (ReadProcessMemory(hProcess, ntHeader, &ntHeaderData, sizeof(ntHeaderData), &bytesRead)) {
                     if (bytesRead == sizeof(ntHeaderData)) {
                         printf("Size Of Image: 0x%x\n", ntHeaderData.OptionalHeader.SizeOfImage);
+                        SIZE_T imageSize = ntHeaderData.OptionalHeader.SizeOfImage;
+                        imageData = (BYTE *)malloc(imageSize);
+                        if (imageData) {
+                                if (ReadProcessMemory(hProcess, imageBase, imageData, imageSize, &bytesRead)) {
+                                    if (bytesRead == imageSize) {
+                                        printf("Successfully read the entire image.\n");
+                                        printf("\n");
+                                    } else {
+                                        printf("Failed to read the entire image.\n");
+                                    }
+                                } else {
+                                    printf("Failed to read image memory.\n");
+                                }
+                                free(imageData);
+                            } else {
+                                printf("Failed to allocate memory for image data.\n");
+                            }
                     } else {
                         printf("Failed to read NT Headers.\n");
                     }
@@ -177,10 +197,8 @@ int main() {
     //PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)imageBase;
     //PIMAGE_NT_HEADERS ntHeader = (PIMAGE_NT_HEADERS)((DWORD_PTR)imageBase + dosHeader->e_lfanew);
 
-    printf("RUn here 1\n");
     PVOID localImage = VirtualAlloc(NULL, ntHeaderData.OptionalHeader.SizeOfImage, MEM_COMMIT, PAGE_READWRITE);
-    printf("RUn here 2\n");
-    memcpy(localImage, imageBase, ntHeaderData.OptionalHeader.SizeOfImage);
+    memcpy(localImage, imageData, ntHeaderData.OptionalHeader.SizeOfImage);
 
     DWORD pid = get_pid_by_name("Notepad.exe");
 
@@ -196,6 +214,7 @@ int main() {
     PVOID targetImage = VirtualAllocEx(targetProcess, NULL, ntHeaderData.OptionalHeader.SizeOfImage, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
     DWORD_PTR deltaImageBase = (DWORD_PTR)targetImage - (DWORD_PTR)imageBase;
 
+    //Lỗi k lấy được relocation table
     printf("Start relo!\n");
     PIMAGE_BASE_RELOCATION relocationTable = (PIMAGE_BASE_RELOCATION)((DWORD_PTR)localImage + ntHeaderData.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
     while (relocationTable->SizeOfBlock > 0) {

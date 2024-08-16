@@ -4,69 +4,11 @@
 #include <psapi.h>
 #include <tlhelp32.h>
 
-// To ensure correct resolution of symbols, add Psapi.lib to TARGETLIBS
-// and compile with -DPSAPI_VERSION=1
+// Function prototypes
+DWORD get_pid_by_name(const char *proc_name);
+PVOID GetModuleBaseAddress(DWORD processID, const char* moduleName);
 
-int PrintModules( DWORD processID )
-{
-    HMODULE hMods[1024];
-    HANDLE hProcess;
-    DWORD cbNeeded;
-    unsigned int i;
-
-    // Print the process identifier.
-    printf( "\nProcess ID: %u\n", processID );
-
-    // Get a handle to the process.
-    hProcess = OpenProcess( PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processID );
-    if (NULL == hProcess)
-        return 1;
-
-   // Get a list of all the modules in this process.
-    if( EnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded))
-    {
-        for ( i = 0; i < (cbNeeded / sizeof(HMODULE)); i++ )
-        {
-            TCHAR szModName[MAX_PATH];
-
-            // Get the full path to the module's file.
-            if ( GetModuleFileNameEx( hProcess, hMods[i], szModName, sizeof(szModName) / sizeof(TCHAR)))
-            {
-                // Print the module name and handle value.
-                _tprintf( TEXT("\t%s (0x%08X)\n"), szModName, hMods[i] );
-            }
-        }
-    }
-
-    // Release the handle to the process.
-    CloseHandle( hProcess );
-
-    return 0;
-}
-
-DWORD RunAndPauseProcess(LPCSTR exePath) {
-    STARTUPINFOA si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    ZeroMemory(&pi, sizeof(pi));
-
-    // Create the process
-    if (!CreateProcessA(exePath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-        printf("CreateProcess failed (%lu).\n", GetLastError());
-        return 0; // Return 0 to indicate failure
-    }
-
-    printf("Process started and paused. PID: %lu\n", pi.dwProcessId);
-
-    // Close handles that are not needed
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-
-    // Return the Process ID
-    return pi.dwProcessId;
-}
-
+// Function to get the PID of a process by its name
 DWORD get_pid_by_name(const char *proc_name) {
     PROCESSENTRY32 pe32;
     HANDLE hProcessSnap;
@@ -96,6 +38,7 @@ DWORD get_pid_by_name(const char *proc_name) {
     CloseHandle(hProcessSnap);
     return pid;
 }
+
 
 PVOID GetModuleBaseAddress(DWORD processID, const char* moduleName) {
     HMODULE hMods[1024];
@@ -131,8 +74,7 @@ PVOID GetModuleBaseAddress(DWORD processID, const char* moduleName) {
     return NULL;
 }
 
-int main(void)
-{
+int main(void) {
     LPCSTR filename = "D:\\Workspace\\C++\\Injection\\test.exe";
     DWORD processID = get_pid_by_name("test.exe");
 
@@ -141,13 +83,10 @@ int main(void)
         return 1;
     }
 
-    // Get the base address of "test.exe".
     PVOID baseAddress = GetModuleBaseAddress(processID, filename);
-
     if (baseAddress != NULL) {
         printf("Base address of test.exe: 0x%p\n", baseAddress);
 
-        // Read the IMAGE_DOS_HEADER from the target process's memory
         HANDLE hProcess = OpenProcess(PROCESS_VM_READ, FALSE, processID);
         if (hProcess != NULL) {
             IMAGE_DOS_HEADER dosHeader;
@@ -161,6 +100,34 @@ int main(void)
                     if (ReadProcessMemory(hProcess, ntHeader, &ntHeaderData, sizeof(ntHeaderData), &bytesRead)) {
                         if (bytesRead == sizeof(ntHeaderData)) {
                             printf("NT Headers Signature: 0x%x\n", ntHeaderData.OptionalHeader.SizeOfImage);
+
+                            // Read entire image
+                            SIZE_T imageSize = ntHeaderData.OptionalHeader.SizeOfImage;
+                            BYTE *imageData = (BYTE *)malloc(imageSize);
+                            if (imageData) {
+                                if (ReadProcessMemory(hProcess, baseAddress, imageData, imageSize, &bytesRead)) {
+                                    if (bytesRead == imageSize) {
+                                        printf("Successfully read the entire image.\n");
+
+                                        // Print the first 100 bytes of the image
+                                        printf("First 100 bytes of the image:\n");
+                                        for (SIZE_T i = 0; i < 100 && i < imageSize; i++) {
+                                            printf("%02X ", imageData[i]);
+                                            if ((i + 1) % 16 == 0) {
+                                                printf("\n");
+                                            }
+                                        }
+                                        printf("\n");
+                                    } else {
+                                        printf("Failed to read the entire image.\n");
+                                    }
+                                } else {
+                                    printf("Failed to read image memory.\n");
+                                }
+                                free(imageData);
+                            } else {
+                                printf("Failed to allocate memory for image data.\n");
+                            }
                         } else {
                             printf("Failed to read NT Headers.\n");
                         }
