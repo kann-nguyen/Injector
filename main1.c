@@ -68,7 +68,7 @@ void LaunchHiddenProcess(const char *processName) {
 
 PVOID LoadTestExeIntoMemory(const char *exePath) {
     // Load the executable into memory without resolving its dependencies or executing its entry point
-    HMODULE hModule = LoadLibraryEx(exePath, NULL, DONT_RESOLVE_DLL_REFERENCES);
+    HMODULE hModule = LoadLibraryEx(exePath, NULL, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if (hModule == NULL) {
         fprintf(stderr, "LoadLibraryEx failed, error: %lu\n", GetLastError());
         return NULL;
