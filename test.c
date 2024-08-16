@@ -9,8 +9,8 @@ DWORD hehe(LPVOID lpParameter) {
 }
 
 int main() {
-    hehe(NULL);
-    /*
+    //hehe(NULL);
+
     PVOID imageBase = GetModuleHandle(NULL);
     PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)imageBase;
     PIMAGE_NT_HEADERS ntHeader = (PIMAGE_NT_HEADERS)((DWORD_PTR)imageBase + dosHeader->e_lfanew);
@@ -32,7 +32,7 @@ int main() {
     // Do nothing, just loop infinitely
     }
 
-    */
+
     return 0;
 }
 
