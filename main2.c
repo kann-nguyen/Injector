@@ -3,19 +3,12 @@
 #include <stdio.h>
 #include <psapi.h>
 #include <tlhelp32.h>
+#include <shlwapi.h> // For PathRemoveFileSpec and PathCombine
 
 typedef struct BASE_RELOCATION_ENTRY {
     USHORT Offset : 12;
     USHORT Type : 4;
 } BASE_RELOCATION_ENTRY, *PBASE_RELOCATION_ENTRY;
-
-
-DWORD InjectionEntryPoint(LPVOID lpParameter) {
-    CHAR moduleName[128] = "";
-    GetModuleFileNameA(NULL, moduleName, sizeof(moduleName));
-    MessageBoxA(NULL, moduleName, "Obligatory PE Injection", MB_OK);
-    return 0;
-}
 
 // Function to get the PID of a process by its name
 DWORD get_pid_by_name(const char *proc_name) {
@@ -68,27 +61,18 @@ void LaunchHiddenProcess(const char *processName) {
     }
 }
 
-DWORD RunAndPauseProcess(LPCSTR exePath) {
-    STARTUPINFOA si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    ZeroMemory(&pi, sizeof(pi));
-
-    // Create the process
-    if (!CreateProcessA(exePath, NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
-        printf("CreateProcess failed (%lu).\n", GetLastError());
-        return 0; // Return 0 to indicate failure
+// Function to terminate a process by its PID
+void terminate_process_by_pid(DWORD pid) {
+    // Open a handle to the process with TERMINATE access
+    HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+    if (hProcess == NULL) {
+        printf("Failed to open process. Error: %lu\n", GetLastError());
+        return;
     }
 
-    printf("Process started and paused. PID: %lu\n", pi.dwProcessId);
-
-    // Close handles that are not needed
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-
-    // Return the Process ID
-    return pi.dwProcessId;
+    // Terminate the process
+    TerminateProcess(hProcess, 1); // Exit code 1
+    CloseHandle(hProcess);
 }
 
 PVOID GetModuleBaseAddress(DWORD processID, const char* moduleName) {
@@ -125,23 +109,50 @@ PVOID GetModuleBaseAddress(DWORD processID, const char* moduleName) {
     return NULL;
 }
 
-int main() {
-    LPCSTR filename = "D:\\Workspace\\C++\\Injection\\test.exe";
-    DWORD processID = get_pid_by_name("test.exe");
+// Function to get the full path of a file in the same directory as the current executable
+void get_file_path_in_executable_dir(const char* fileName, char* fullPath, size_t size) {
+    // Buffer to hold the path of the current executable
+    char exePath[MAX_PATH];
 
+    // Get the path of the current executable
+    if (GetModuleFileName(NULL, exePath, MAX_PATH) == 0) {
+        printf("Failed to get executable path. Error: %lu\n", GetLastError());
+        return;
+    }
+
+    // Remove the executable name to get the directory path
+    if (PathRemoveFileSpec(exePath)) {
+        // Combine the directory path with the desired file name
+        if (PathCombine(fullPath, exePath, fileName) == NULL) {
+            printf("Failed to combine paths. Error: %lu\n", GetLastError());
+        }
+    } else {
+        printf("Failed to remove file spec from path. Error: %lu\n", GetLastError());
+    }
+}
+
+
+int main() {
+
+    char filePath[MAX_PATH];
+    const char* filename = "test.exe";
+    get_file_path_in_executable_dir(filename, filePath, sizeof(filePath));
+    //LPCSTR filename = "D:\\Workspace\\C++\\Injection\\test.exe";
+    LaunchHiddenProcess("test.exe");
+    Sleep(2000);
+    DWORD processID = get_pid_by_name("test.exe");
     if (processID == 0) {
         printf("Process not found.\n");
         return 1;
     }
-
     // Get the base address of "test.exe".
-    PVOID imageBase = GetModuleBaseAddress(processID, filename);
+    PVOID imageBase = GetModuleBaseAddress(processID, filePath);
     if(imageBase == 0) {
         printf("Error 1\n");
         CloseHandle(imageBase);
         return 1;
     }
-    printf("Image Base: %p\n", imageBase);
+    //printf("Image Base: %p\n", imageBase);
     IMAGE_NT_HEADERS ntHeaderData;
     BYTE *imageData;
 
@@ -204,7 +215,7 @@ int main() {
 
     if (pid == 0) {
         LaunchHiddenProcess("Notepad.exe");
-        Sleep(5000);
+        Sleep(2000);
         pid = get_pid_by_name("Notepad.exe");
     }
     if (pid == 0)
@@ -215,21 +226,26 @@ int main() {
     DWORD_PTR deltaImageBase = (DWORD_PTR)targetImage - (DWORD_PTR)imageBase;
 
     //Lỗi k lấy được relocation table
-    printf("Start relo!\n");
+    //printf("Start Relo!\n");
+    int i = 1;
     PIMAGE_BASE_RELOCATION relocationTable = (PIMAGE_BASE_RELOCATION)((DWORD_PTR)localImage + ntHeaderData.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
     while (relocationTable->SizeOfBlock > 0) {
         DWORD relocationEntriesCount = (relocationTable->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(USHORT);
         PBASE_RELOCATION_ENTRY relocationRVA = (PBASE_RELOCATION_ENTRY)(relocationTable + 1);
-
-        for (DWORD i = 0; i < relocationEntriesCount; i++) {
-            if (relocationRVA[i].Offset) {
-                PDWORD_PTR patchedAddress = (PDWORD_PTR)((DWORD_PTR)localImage + relocationTable->VirtualAddress + relocationRVA[i].Offset);
+        //printf("Relo Block: %d\n", i);
+        i++;
+        for (DWORD j = 0; j < relocationEntriesCount; j++) {
+            if (relocationRVA[j].Offset) {
+                PDWORD_PTR originalAddress = (PDWORD_PTR)((DWORD_PTR)localImage + relocationTable->VirtualAddress + relocationRVA[j].Offset);
+                PDWORD_PTR patchedAddress = originalAddress;
+                //printf("Original Address: %p -> ", (void*)*patchedAddress);
                 *patchedAddress += deltaImageBase;
+                //printf("Patched Address: %p\n", (void*)*patchedAddress);
             }
         }
         relocationTable = (PIMAGE_BASE_RELOCATION)((DWORD_PTR)relocationTable + relocationTable->SizeOfBlock);
     }
-    printf("Finish relo!\n");
+    //printf("End Relo!\n");
 
     if (!WriteProcessMemory(targetProcess, targetImage, localImage, ntHeaderData.OptionalHeader.SizeOfImage, NULL)) {
         printf("Error 2\n");
@@ -240,7 +256,20 @@ int main() {
         return 1;
     }
 
-    DWORD_PTR injectionEntryPointAddress = (DWORD_PTR)imageBase + (DWORD_PTR)ntHeaderData.OptionalHeader.AddressOfEntryPoint + deltaImageBase;
+    DWORD_PTR injectionEntryRVA = 0x152A;
+    DWORD_PTR finalAddress = (DWORD_PTR)imageBase + injectionEntryRVA;
+
+
+    //DWORD_PTR injectionEntryPointAddress = finalAddress + deltaImageBase;
+    DWORD_PTR injectionEntryPointAddress = finalAddress + deltaImageBase;
+
+    //printf("Image Base: %p\n", (DWORD_PTR)imageBase);
+    //printf("Address of Entry Point on Base: %p\n", (DWORD_PTR)imageBase + injectionEntryRVA);
+    //printf("Target Image Base: %p\n", (DWORD_PTR)targetImage);
+    //printf("Delta Image Base: %p\n", deltaImageBase);
+    //printf("Address of Entry Point on Target: %p\n", injectionEntryPointAddress);
+
+    //DWORD_PTR injectionEntryPointAddress = (DWORD_PTR)imageBase + (DWORD_PTR)ntHeaderData.OptionalHeader.AddressOfEntryPoint + deltaImageBase;
     HANDLE remoteThread = CreateRemoteThread(targetProcess, NULL, 0, (LPTHREAD_START_ROUTINE)injectionEntryPointAddress, NULL, 0, NULL);
     if (remoteThread == NULL) {
         printf("Error 3\n");
@@ -252,14 +281,16 @@ int main() {
     }
 
     printf("Success!\n");
+    Sleep(5000);
+
+    terminate_process_by_pid(processID);
+    terminate_process_by_pid(pid);
     WaitForSingleObject(remoteThread, INFINITE);
-    //Sleep(5000);
 
     CloseHandle(imageBase);
     CloseHandle(remoteThread);
     VirtualFreeEx(targetProcess, targetImage, 0, MEM_RELEASE);
     CloseHandle(targetProcess);
     VirtualFree(localImage, 0, MEM_RELEASE);
-
     return 0;
 }

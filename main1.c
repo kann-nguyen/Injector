@@ -155,9 +155,9 @@ int main() {
         return 1;
     }
 
-    DWORD_PTR injectionEntryRVA = 0x5200;
+    DWORD_PTR injectionEntryRVA = 0x152A;
     DWORD_PTR entryAddress = ntHeader->OptionalHeader.AddressOfEntryPoint;
-    DWORD_PTR finalAddress = (DWORD_PTR)imageBase + entryAddress;
+    DWORD_PTR finalAddress = (DWORD_PTR)imageBase + injectionEntryRVA;
 
     printf("Entry Address: %p\n", finalAddress);
 
