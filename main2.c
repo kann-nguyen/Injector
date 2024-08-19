@@ -10,6 +10,37 @@ typedef struct BASE_RELOCATION_ENTRY {
     USHORT Type : 4;
 } BASE_RELOCATION_ENTRY, *PBASE_RELOCATION_ENTRY;
 
+
+// Function pointers for NtSuspendProcess and NtResumeProcess
+typedef NTSTATUS(NTAPI* pNtSuspendProcess)(HANDLE ProcessHandle);
+typedef NTSTATUS(NTAPI* pNtResumeProcess)(HANDLE ProcessHandle);
+
+void SuspendProcess(DWORD processID) {
+    HMODULE hNtDll = GetModuleHandle("ntdll.dll");
+    pNtSuspendProcess NtSuspendProcess = (pNtSuspendProcess)GetProcAddress(hNtDll, "NtSuspendProcess");
+
+    if (NtSuspendProcess == NULL) {
+        printf("Failed to load NtSuspendProcess function.\n");
+        return;
+    }
+
+    HANDLE hProcess = OpenProcess(PROCESS_SUSPEND_RESUME, FALSE, processID);
+    if (hProcess == NULL) {
+        printf("Failed to open process. Error: %lu\n", GetLastError());
+        return;
+    }
+
+    NTSTATUS status = NtSuspendProcess(hProcess);
+    if (status != 0) {
+        printf("Failed to suspend process. Status: 0x%lx\n", status);
+    } else {
+        printf("Process suspended successfully.\n");
+    }
+
+    CloseHandle(hProcess);
+}
+
+
 // Function to get the PID of a process by its name
 DWORD get_pid_by_name(const char *proc_name) {
     PROCESSENTRY32 pe32;
@@ -139,12 +170,13 @@ int main() {
     get_file_path_in_executable_dir(filename, filePath, sizeof(filePath));
     //LPCSTR filename = "D:\\Workspace\\C++\\Injection\\test.exe";
     LaunchHiddenProcess("test.exe");
-    Sleep(2000);
+    Sleep(1000);
     DWORD processID = get_pid_by_name("test.exe");
     if (processID == 0) {
         printf("Process not found.\n");
         return 1;
     }
+    SuspendProcess(processID);
     // Get the base address of "test.exe".
     PVOID imageBase = GetModuleBaseAddress(processID, filePath);
     if(imageBase == 0) {
@@ -215,7 +247,7 @@ int main() {
 
     if (pid == 0) {
         LaunchHiddenProcess("Notepad.exe");
-        Sleep(2000);
+        Sleep(1000);
         pid = get_pid_by_name("Notepad.exe");
     }
     if (pid == 0)
@@ -281,7 +313,7 @@ int main() {
     }
 
     printf("Success!\n");
-    Sleep(5000);
+    Sleep(7000);
 
     terminate_process_by_pid(processID);
     terminate_process_by_pid(pid);
