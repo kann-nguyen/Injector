@@ -164,27 +164,28 @@ void get_file_path_in_executable_dir(const char* fileName, char* fullPath, size_
 
 
 int main() {
-
     char filePath[MAX_PATH];
     const char* filename = "test.exe";
     get_file_path_in_executable_dir(filename, filePath, sizeof(filePath));
     //LPCSTR filename = "D:\\Workspace\\C++\\Injection\\test.exe";
     LaunchHiddenProcess("test.exe");
-    Sleep(1000);
+
+    Sleep(20);
     DWORD processID = get_pid_by_name("test.exe");
+    SuspendProcess(processID);
     if (processID == 0) {
         printf("Process not found.\n");
         return 1;
     }
-    SuspendProcess(processID);
-    // Get the base address of "test.exe".
+
+
     PVOID imageBase = GetModuleBaseAddress(processID, filePath);
     if(imageBase == 0) {
         printf("Error 1\n");
         CloseHandle(imageBase);
         return 1;
     }
-    //printf("Image Base: %p\n", imageBase);
+
     IMAGE_NT_HEADERS ntHeaderData;
     BYTE *imageData;
 
@@ -196,19 +197,19 @@ int main() {
         SIZE_T bytesRead;
         if (ReadProcessMemory(hProcess, imageBase, &dosHeader, sizeof(dosHeader), &bytesRead)) {
             if (bytesRead == sizeof(dosHeader) && dosHeader.e_magic == IMAGE_DOS_SIGNATURE) {
-                printf("DOS Header e_magic: 0x%x\n", dosHeader.e_magic);
+                //printf("DOS Header e_magic: 0x%x\n", dosHeader.e_magic);
 
                 PIMAGE_NT_HEADERS ntHeader = (PIMAGE_NT_HEADERS)((DWORD_PTR)imageBase + dosHeader.e_lfanew);
 
                 if (ReadProcessMemory(hProcess, ntHeader, &ntHeaderData, sizeof(ntHeaderData), &bytesRead)) {
                     if (bytesRead == sizeof(ntHeaderData)) {
-                        printf("Size Of Image: 0x%x\n", ntHeaderData.OptionalHeader.SizeOfImage);
+                        //printf("Size Of Image: 0x%x\n", ntHeaderData.OptionalHeader.SizeOfImage);
                         SIZE_T imageSize = ntHeaderData.OptionalHeader.SizeOfImage;
                         imageData = (BYTE *)malloc(imageSize);
                         if (imageData) {
                                 if (ReadProcessMemory(hProcess, imageBase, imageData, imageSize, &bytesRead)) {
                                     if (bytesRead == imageSize) {
-                                        printf("Successfully read the entire image.\n");
+                                        //printf("Successfully read the entire image.\n");
                                         printf("\n");
                                     } else {
                                         printf("Failed to read the entire image.\n");
@@ -237,9 +238,6 @@ int main() {
         printf("Failed to open process for reading.\n");
     }
 
-    //PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)imageBase;
-    //PIMAGE_NT_HEADERS ntHeader = (PIMAGE_NT_HEADERS)((DWORD_PTR)imageBase + dosHeader->e_lfanew);
-
     PVOID localImage = VirtualAlloc(NULL, ntHeaderData.OptionalHeader.SizeOfImage, MEM_COMMIT, PAGE_READWRITE);
     memcpy(localImage, imageData, ntHeaderData.OptionalHeader.SizeOfImage);
 
@@ -257,27 +255,19 @@ int main() {
     PVOID targetImage = VirtualAllocEx(targetProcess, NULL, ntHeaderData.OptionalHeader.SizeOfImage, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
     DWORD_PTR deltaImageBase = (DWORD_PTR)targetImage - (DWORD_PTR)imageBase;
 
-    //Lỗi k lấy được relocation table
-    //printf("Start Relo!\n");
-    int i = 1;
     PIMAGE_BASE_RELOCATION relocationTable = (PIMAGE_BASE_RELOCATION)((DWORD_PTR)localImage + ntHeaderData.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
     while (relocationTable->SizeOfBlock > 0) {
         DWORD relocationEntriesCount = (relocationTable->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(USHORT);
         PBASE_RELOCATION_ENTRY relocationRVA = (PBASE_RELOCATION_ENTRY)(relocationTable + 1);
-        //printf("Relo Block: %d\n", i);
-        i++;
         for (DWORD j = 0; j < relocationEntriesCount; j++) {
             if (relocationRVA[j].Offset) {
                 PDWORD_PTR originalAddress = (PDWORD_PTR)((DWORD_PTR)localImage + relocationTable->VirtualAddress + relocationRVA[j].Offset);
                 PDWORD_PTR patchedAddress = originalAddress;
-                //printf("Original Address: %p -> ", (void*)*patchedAddress);
                 *patchedAddress += deltaImageBase;
-                //printf("Patched Address: %p\n", (void*)*patchedAddress);
             }
         }
         relocationTable = (PIMAGE_BASE_RELOCATION)((DWORD_PTR)relocationTable + relocationTable->SizeOfBlock);
     }
-    //printf("End Relo!\n");
 
     if (!WriteProcessMemory(targetProcess, targetImage, localImage, ntHeaderData.OptionalHeader.SizeOfImage, NULL)) {
         printf("Error 2\n");
@@ -288,20 +278,11 @@ int main() {
         return 1;
     }
 
+    //it is main address
     DWORD_PTR injectionEntryRVA = 0x152A;
     DWORD_PTR finalAddress = (DWORD_PTR)imageBase + injectionEntryRVA;
-
-
-    //DWORD_PTR injectionEntryPointAddress = finalAddress + deltaImageBase;
     DWORD_PTR injectionEntryPointAddress = finalAddress + deltaImageBase;
 
-    //printf("Image Base: %p\n", (DWORD_PTR)imageBase);
-    //printf("Address of Entry Point on Base: %p\n", (DWORD_PTR)imageBase + injectionEntryRVA);
-    //printf("Target Image Base: %p\n", (DWORD_PTR)targetImage);
-    //printf("Delta Image Base: %p\n", deltaImageBase);
-    //printf("Address of Entry Point on Target: %p\n", injectionEntryPointAddress);
-
-    //DWORD_PTR injectionEntryPointAddress = (DWORD_PTR)imageBase + (DWORD_PTR)ntHeaderData.OptionalHeader.AddressOfEntryPoint + deltaImageBase;
     HANDLE remoteThread = CreateRemoteThread(targetProcess, NULL, 0, (LPTHREAD_START_ROUTINE)injectionEntryPointAddress, NULL, 0, NULL);
     if (remoteThread == NULL) {
         printf("Error 3\n");
@@ -312,17 +293,17 @@ int main() {
         return 1;
     }
 
-    printf("Success!\n");
-    Sleep(7000);
 
-    terminate_process_by_pid(processID);
-    terminate_process_by_pid(pid);
     WaitForSingleObject(remoteThread, INFINITE);
+    //Sleep(5000);
 
     CloseHandle(imageBase);
     CloseHandle(remoteThread);
     VirtualFreeEx(targetProcess, targetImage, 0, MEM_RELEASE);
     CloseHandle(targetProcess);
     VirtualFree(localImage, 0, MEM_RELEASE);
+
+    terminate_process_by_pid(processID);
+    terminate_process_by_pid(pid);
     return 0;
 }
